@@ -1,42 +1,19 @@
 import pandas as pd
 import random
+import numpy as np
 from data import monte_carlo_data
+import matplotlib.pyplot as plt
 
-prices = monte_carlo_data(
-    "AAPL",
-    "2024-01-01",
-    "2025-01-01"
-)
+df = monte_carlo_data("AAPL","2024-01-01", "2025-01-01")
+df.to_csv("data.csv",index = False)
+
 
 
 class QAgent:
 
     def __init__(self):
 
-        self.q_table = {
-            ("up",False) : {
-                0:0,
-                1:0,
-                2:0
-            },
-            ("up",True) : {
-                0:0,
-                1:0,
-                2:0
-            
-            },
-            ("down",False):{
-                 0:0,
-                1:0,
-                2:0
-            },
-            ("down",True):{
-                 0:0,
-                1:0,
-                2:0
-            }
-            
-        }
+        self.q_table = {}
 
 
         self.gamma = 0.99
@@ -97,9 +74,7 @@ class QAgent:
 
         current_q = self.q_table[state][action]
 
-        max_future_q = max(
-            self.q_table[next_state].values()
-        )
+        max_future_q = max(self.q_table[next_state].values())
 
         new_q = current_q + self.alpha * (
             reward +
@@ -142,44 +117,48 @@ class TradingEnv:
 
     def get_state(self):
 
-        if self.current_step == 0:
-
-            trend = "up"
+        if self.current_step < 10:
+            momentum = "weak_up"
+            vol_regime = "low_vol"
 
         else:
+            current_price = self.prices.iloc[self.current_step]
+            prev_price = self.prices.iloc[self.current_step - 1]
 
-            current_price = self.prices.iloc[
-                self.current_step
-            ]
+            returns = (current_price - prev_price) / prev_price
 
-            prev_price = self.prices.iloc[
-                self.current_step - 1
-            ]
+            if returns > 0.02:
+                momentum = "strong_up"
 
-            if current_price > prev_price:
-
-                trend = "up"
+            elif returns > 0:
+                momentum = "weak_up"
 
             else:
+                momentum = "down"
 
-                trend = "down"
+            recent_prices = self.prices.iloc[self.current_step - 10 : self.current_step]
+            recent_returns = recent_prices.pct_change()
+            volatility = recent_returns.std()
+
+            if volatility > 0.03:
+                vol_regime = "high_vol"
+
+            else:
+                vol_regime = "low_vol"
+
 
         holding = self.shares_held > 0
-
-        state = (trend, holding)
+        state = ( momentum,vol_regime, holding)
 
         return state
 
 
+
     def step(self, action):
 
-        current_price = self.prices.iloc[
-            self.current_step
-        ]
+        current_price = self.prices.iloc[self.current_step]
 
-        old_portfolio_value = (
-            self.portfolio_value
-        )
+        old_portfolio_value = (self.portfolio_value )
 
 
         # BUY
@@ -243,9 +222,7 @@ class TradingEnv:
 
 agent = QAgent()
 
-env = TradingEnv(prices)
-
-
+env = TradingEnv(df)
 for _ in range(1000):
 
     state = env.reset()
@@ -271,3 +248,50 @@ for _ in range(1000):
 
 
 print(agent.q_table)
+
+agent.epsilon = 0
+portfolio_history = []
+actions_history = []
+price_history = []
+
+state = env.reset()
+
+done = False
+
+while not done:
+
+    action = agent.choose_action(state)
+
+    next_state, reward, done = env.step(action)
+    portfolio_history.append(env.portfolio_value)
+    actions_history.append(action)
+    price_history.append(env.prices.iloc[env.current_step])
+ 
+    state = next_state
+
+initial_value = portfolio_history[0]
+
+final_value = portfolio_history[-1]
+
+total_return = ( final_value - initial_value) / initial_value
+
+portfolio_returns = pd.Series(portfolio_history).pct_change().dropna()
+sharpe_ratio = (portfolio_returns.mean()/portfolio_returns.std())
+rolling_max = pd.Series(portfolio_history).cummax()
+
+drawdown = (pd.Series(portfolio_history)- rolling_max) / rolling_max
+
+max_drawdown = drawdown.min()
+
+initial_price = df.iloc[0]
+
+final_price = df.iloc[-1]
+
+buy_hold_return = (final_price - initial_price) / initial_price
+
+plt.plot(portfolio_history)
+
+print("Total returns: ",total_return)
+print("Sharpe ratio: ",sharpe_ratio)
+print("Max drawdown: ",max_drawdown)
+print("Buy and hold return: ",buy_hold_return)
