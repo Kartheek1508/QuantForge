@@ -1,11 +1,13 @@
 import pandas as pd
 import random
 import numpy as np
-from data import monte_carlo_data
+from data import reinforcement_data
 import matplotlib.pyplot as plt
 
-df = monte_carlo_data("AAPL","2024-01-01", "2025-01-01")
-df.to_csv("data.csv",index = False)
+df = reinforcement_data("AAPL ","2020-01-01", "2025-01-01")
+train_data = df[df.index<"2024-01-01"]
+test_data = df[df.index >= "2024-01-01"]
+
 
 
 
@@ -90,17 +92,17 @@ class TradingEnv:
     def __init__(self, prices, initial_cash=10000):
 
         self.prices = prices
-
         self.initial_cash = initial_cash
-
         self.current_step = 0
-
         self.cash = initial_cash
-
         self.shares_held = 0
-
         self.portfolio_value = initial_cash
-
+        self.position_size = 0.1
+        self.transaction_cost = 0.001
+        returns = self.prices.pct_change()
+        rolling_vol = returns.rolling(10).std()
+        self.low_vol_thresh = rolling_vol.quantile(0.33)
+        self.high_vol_thresh = rolling_vol.quantile(0.66)
 
     def reset(self):
 
@@ -120,6 +122,7 @@ class TradingEnv:
         if self.current_step < 10:
             momentum = "weak_up"
             vol_regime = "low_vol"
+            ma_signal = "above_ma"
 
         else:
             current_price = self.prices.iloc[self.current_step]
@@ -140,15 +143,22 @@ class TradingEnv:
             recent_returns = recent_prices.pct_change()
             volatility = recent_returns.std()
 
-            if volatility > 0.03:
+            ma_20 = recent_prices.mean()
+
+            if current_price>ma_20:
+                ma_signal = "above_ma"
+            else:
+                ma_signal = "below_ma"
+
+            if volatility<self.low_vol_thresh:
+                vol_regime = "low_vol"
+            elif volatility<self.high_vol_thresh:
+                vol_regime = "medium_vol"
+            else:
                 vol_regime = "high_vol"
 
-            else:
-                vol_regime = "low_vol"
-
-
         holding = self.shares_held > 0
-        state = ( momentum,vol_regime, holding)
+        state = ( momentum,vol_regime, holding,ma_signal)
 
         return state
 
@@ -164,14 +174,13 @@ class TradingEnv:
         # BUY
         if action == 1:
 
-            if (
-                self.cash >= current_price
-                and self.shares_held == 0
-            ):
+            if (self.cash >= current_price and self.shares_held == 0):
+                amount_invest = self.cash*self.position_size
+                shares_to_buy = amount_invest/current_price
+                fee = amount_invest*self.transaction_cost
+                self.cash -= amount_invest+fee
+                self.shares_held += shares_to_buy
 
-                self.cash -= current_price
-
-                self.shares_held += 1
 
 
         # SELL
@@ -179,15 +188,16 @@ class TradingEnv:
 
             if self.shares_held > 0:
 
-                self.cash += current_price
+                sale_val = self.shares_held*current_price
+                fee = self.transaction_cost*sale_val
+                self.cash += sale_val-fee
 
-                self.shares_held -= 1
+                self.shares_held = 0
 
 
         # HOLD
         else:
             pass
-
 
         self.current_step += 1
 
@@ -201,19 +211,10 @@ class TradingEnv:
             done = False
 
 
-        new_price = self.prices.iloc[
-            self.current_step
-        ]
+        new_price = self.prices.iloc[self.current_step]
 
-        self.portfolio_value = (
-            self.cash +
-            (self.shares_held * new_price)
-        )
-
-        reward = (
-            self.portfolio_value -
-            old_portfolio_value
-        )
+        self.portfolio_value = self.cash +(self.shares_held * new_price)
+        reward = reward = (self.portfolio_value -old_portfolio_value) / old_portfolio_value
 
         next_state = self.get_state()
 
@@ -222,10 +223,12 @@ class TradingEnv:
 
 agent = QAgent()
 
-env = TradingEnv(df)
+training_env = TradingEnv(train_data)
+testing_env = TradingEnv(test_data)
+
 for _ in range(1000):
 
-    state = env.reset()
+    state = training_env.reset()
 
     done = False
 
@@ -233,7 +236,7 @@ for _ in range(1000):
 
         action = agent.choose_action(state)
 
-        next_state, reward, done = env.step(action)
+        next_state, reward, done = training_env.step(action)
 
         agent.update_q_values(state,
             action,
@@ -254,7 +257,7 @@ portfolio_history = []
 actions_history = []
 price_history = []
 
-state = env.reset()
+state = testing_env.reset()
 
 done = False
 
@@ -262,10 +265,10 @@ while not done:
 
     action = agent.choose_action(state)
 
-    next_state, reward, done = env.step(action)
-    portfolio_history.append(env.portfolio_value)
+    next_state, reward, done = testing_env.step(action)
+    portfolio_history.append(testing_env.portfolio_value)
     actions_history.append(action)
-    price_history.append(env.prices.iloc[env.current_step])
+    price_history.append(testing_env.prices.iloc[testing_env.current_step])
  
     state = next_state
 
@@ -283,9 +286,9 @@ drawdown = (pd.Series(portfolio_history)- rolling_max) / rolling_max
 
 max_drawdown = drawdown.min()
 
-initial_price = df.iloc[0]
+initial_price = test_data.iloc[0]
 
-final_price = df.iloc[-1]
+final_price = test_data.iloc[-1]
 
 buy_hold_return = (final_price - initial_price) / initial_price
 
