@@ -31,10 +31,10 @@ def monte_carlo(df, T, initial_price):
 
     #extractimng the parameters
 
-    nu = result.params['nu']
+    nu = result.params['mu']
     omega = result.params['omega']
-    alpha = result.params['alpha']
-    beta = result.params['beta']
+    alpha = result.params['alpha[1]']
+    beta = result.params['beta[1]']
     last_vol = result.conditional_volatility.iloc[-1]
     
     #generate the random number generator and initialise the arrays for price paths, current price,current volatility 
@@ -61,3 +61,7 @@ def monte_carlo(df, T, initial_price):
     losses = final_price - initial_price
     VaR = np.percentile(losses, 5)
     return [expectation, voltality, losses, VaR]
+import yfinance as yf
+data = yf.download(tickers="AAPL",period="5y")
+d = data['Close']
+monte_carlo(d,10,100)
