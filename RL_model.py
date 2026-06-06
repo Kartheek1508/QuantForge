@@ -16,8 +16,6 @@ class QAgent:
     def __init__(self):
 
         self.q_table = {}
-
-
         self.gamma = 0.99
         self.alpha = 0.1
 
